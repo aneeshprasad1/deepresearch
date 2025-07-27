@@ -1,0 +1,17 @@
+langchain>=0.1.0
+langchain-openai>=0.0.5
+langchain-community>=0.0.10
+langchain-core>=0.1.16
+openai>=1.12.0
+duckduckgo-search>=4.1.1
+chromadb>=0.4.22
+pydantic>=2.6.1
+asyncio
+typer>=0.9.0
+rich>=13.7.0
+python-dotenv>=1.0.0
+httpx>=0.26.0
+beautifulsoup4>=4.12.3
+markdown>=3.5.2
+pytest>=7.4.4
+pytest-asyncio>=0.23.5 
