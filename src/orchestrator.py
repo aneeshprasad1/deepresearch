@@ -90,8 +90,8 @@ class ResearchOrchestrator:
         return final_report
     
     async def _run_subagents(self, sub_tasks: List[Dict[str, Any]], query: str) -> List[Dict[str, Any]]:
-        """Run subagents in parallel for the given tasks."""
-        print(f"🤖 Running {len(sub_tasks)} subagents in parallel...")
+        """Run subagents with staggered execution to avoid rate limiting."""
+        print(f"🤖 Running {len(sub_tasks)} subagents with staggered execution...")
         
         # Create subagents
         subagents = []
@@ -100,26 +100,32 @@ class ResearchOrchestrator:
             subagents.append(subagent)
             print(f"  - Created {subagent.name} for: {task.get('title', 'Unknown task')}")
         
-        # Run subagents in parallel
-        tasks = [subagent.research() for subagent in subagents]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        
-        # Process results and handle exceptions
-        processed_results = []
-        for i, result in enumerate(results):
-            if isinstance(result, Exception):
-                print(f"❌ Error in {subagents[i].name}: {result}")
-                processed_results.append({
-                    "agent": subagents[i].name,
-                    "task": sub_tasks[i],
-                    "error": str(result),
+        # Run subagents with staggered start to avoid overwhelming the search API
+        results = []
+        for i, subagent in enumerate(subagents):
+            print(f"  🚀 Starting {subagent.name}...")
+            
+            try:
+                result = await subagent.research()
+                results.append(result)
+                print(f"  ✅ {subagent.name} completed successfully")
+                
+                # Add delay between subagent starts (except for the last one)
+                if i < len(subagents) - 1:
+                    delay = settings.subagent_start_delay  # Use configured delay
+                    print(f"  ⏳ Waiting {delay}s before starting next subagent...")
+                    await asyncio.sleep(delay)
+                    
+            except Exception as e:
+                print(f"  ❌ Error in {subagent.name}: {e}")
+                results.append({
+                    "agent": subagent.name,
+                    "task": subagents[i].task,
+                    "error": str(e),
                     "timestamp": datetime.utcnow().isoformat()
                 })
-            else:
-                processed_results.append(result)
-                print(f"✅ {subagents[i].name} completed successfully")
         
-        return processed_results
+        return results
     
     async def _create_refined_tasks(self, refined_query: str, decision: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Create refined sub-tasks based on the research decision."""

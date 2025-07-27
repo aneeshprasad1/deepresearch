@@ -4,11 +4,12 @@ Subagent for performing focused web searches and evaluations.
 
 import json
 import asyncio
+import time
 from typing import Dict, List, Any, Optional
 from duckduckgo_search import DDGS
 
 from .base_agent import BaseAgent
-from ..config import get_search_config
+from ..config import get_search_config, settings
 
 
 class Subagent(BaseAgent):
@@ -19,6 +20,10 @@ class Subagent(BaseAgent):
         self.search_config = get_search_config()
         super().__init__(f"Subagent_{task.get('id', 'unknown')}", model_name)
         self.search_engine = DDGS()
+        # Rate limiting configuration from settings
+        self.search_delay = settings.search_delay
+        self.max_retries = settings.max_search_retries
+        self.retry_delay_base = 1.0  # Base delay for exponential backoff
     
     def _get_system_prompt(self) -> str:
         return f"""You are a Subagent focused on: {self.task.get('focus_area', 'research')}
@@ -39,11 +44,15 @@ Be thorough, objective, and focus on your specific research area."""
         """Perform the assigned research task."""
         search_queries = self.task.get("search_queries", [self.task.get("title", "")])
         
-        # Perform web searches
+        # Perform web searches with delays
         search_results = []
-        for query in search_queries:
+        for i, query in enumerate(search_queries):
             results = await self._web_search(query)
             search_results.extend(results)
+            
+            # Add delay between queries (except for the last one)
+            if i < len(search_queries) - 1:
+                await asyncio.sleep(self.search_delay)
         
         # Evaluate and analyze results
         evaluation = await self._evaluate_results(search_results)
@@ -57,28 +66,54 @@ Be thorough, objective, and focus on your specific research area."""
         }
 
     async def _web_search(self, query: str) -> List[Dict[str, Any]]:
-        """Perform web search using DuckDuckGo."""
-        try:
-            # Use DuckDuckGo search
-            results = []
-            search_results = self.search_engine.text(
-                query, 
-                max_results=self.search_config["max_results"]
-            )
-            
-            for result in search_results:
-                results.append({
-                    "title": result.get("title", ""),
-                    "link": result.get("link", ""),
-                    "snippet": result.get("body", ""),
-                    "source": result.get("link", ""),
-                    "query": query
-                })
-            
-            return results
-        except Exception as e:
-            print(f"Search error for query '{query}': {e}")
-            return []
+        """Perform web search using DuckDuckGo with retry logic and rate limiting."""
+        for attempt in range(self.max_retries):
+            try:
+                # Add exponential backoff delay for retries
+                if attempt > 0:
+                    delay = self.retry_delay_base * (2 ** attempt)
+                    print(f"Retrying search for '{query}' in {delay:.1f}s (attempt {attempt + 1}/{self.max_retries})")
+                    await asyncio.sleep(delay)
+                
+                # Perform the search
+                search_results = self.search_engine.text(
+                    query, 
+                    max_results=self.search_config["max_results"]
+                )
+                
+                results = []
+                for result in search_results:
+                    results.append({
+                        "title": result.get("title", ""),
+                        "link": result.get("link", ""),
+                        "snippet": result.get("body", ""),
+                        "source": result.get("link", ""),
+                        "query": query
+                    })
+                
+                print(f"✅ Search successful for '{query}' - found {len(results)} results")
+                return results
+                
+            except Exception as e:
+                error_msg = str(e)
+                print(f"Search error for query '{query}' (attempt {attempt + 1}/{self.max_retries}): {error_msg}")
+                
+                # If it's a rate limit error, wait longer
+                if "202" in error_msg or "rate" in error_msg.lower():
+                    if attempt < self.max_retries - 1:
+                        delay = self.retry_delay_base * (2 ** (attempt + 2))  # Longer delay for rate limits
+                        print(f"Rate limit detected, waiting {delay:.1f}s before retry...")
+                        await asyncio.sleep(delay)
+                    else:
+                        print(f"Rate limit exceeded for '{query}' after {self.max_retries} attempts")
+                        return []
+                else:
+                    # For other errors, use standard backoff
+                    if attempt == self.max_retries - 1:
+                        print(f"Failed to search for '{query}' after {self.max_retries} attempts")
+                        return []
+        
+        return []
 
     async def _evaluate_results(self, search_results: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Evaluate and analyze search results."""

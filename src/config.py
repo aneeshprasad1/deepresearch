@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     # Search Configuration
     search_engine: str = "duckduckgo"  # duckduckgo, serpapi, etc.
     max_search_results: int = 10
+    search_delay: float = 2.0  # Delay between searches in seconds
+    max_search_retries: int = 3  # Maximum retry attempts for searches
+    subagent_start_delay: float = 3.0  # Delay between subagent starts
     
     # Memory Configuration
     memory_type: str = "chroma"  # chroma, in_memory
